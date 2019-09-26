@@ -6,11 +6,10 @@ from utils.datasets import *
 from utils.utils import *
 
 
-def detect(save_txt=False, save_img=False, view_img=False):
+def detect(save_txt=False, save_img=False):
     img_size = (320, 192) if ONNX_EXPORT else opt.img_size  # (320, 192) or (416, 256) or (608, 352) for (height, width)
-    out, source, weights, half = opt.output, opt.source, opt.weights, opt.half
-    webcam = source == '0' or source.startswith('rtsp') or source.startswith('http')
-    streams = 'streams' in source and source.endswith('.txt')
+    out, source, weights, half, view_img = opt.output, opt.source, opt.weights, opt.half, opt.view_img
+    webcam = source == '0' or source.startswith('rtsp') or source.startswith('http') or source.endswith('.txt')
 
     # Initialize
     device = torch_utils.select_device(device='cpu' if ONNX_EXPORT else opt.device)
@@ -22,6 +21,7 @@ def detect(save_txt=False, save_img=False, view_img=False):
     model = Darknet(opt.cfg, img_size)
 
     # Load weights
+    attempt_download(weights)
     if weights.endswith('.pt'):  # pytorch format
         model.load_state_dict(torch.load(weights, map_location=device)['model'])
     else:  # darknet format
@@ -46,13 +46,10 @@ def detect(save_txt=False, save_img=False, view_img=False):
 
     # Set Dataloader
     vid_path, vid_writer = None, None
-    if streams:
-        view_img = False
+    if webcam:
+        view_img = True
         torch.backends.cudnn.benchmark = True  # set True to speed up constant image size inference
         dataset = LoadStreams(source, img_size=img_size, half=half)
-    elif webcam:
-        view_img = True
-        dataset = LoadWebcam(source, img_size=img_size, half=half)
     else:
         save_img = True
         dataset = LoadImages(source, img_size=img_size, half=half)
@@ -73,7 +70,7 @@ def detect(save_txt=False, save_img=False, view_img=False):
         pred, _ = model(img)
 
         for i, det in enumerate(non_max_suppression(pred, opt.conf_thres, opt.nms_thres)):  # detections per image
-            if streams:  # batch_size > 1
+            if webcam:  # batch_size >= 1
                 p, s, im0 = path[i], '%g: ' % i, im0s[i]
             else:
                 p, s, im0 = path, '', im0s
@@ -142,6 +139,7 @@ if __name__ == '__main__':
     parser.add_argument('--fourcc', type=str, default='mp4v', help='output video codec (verify ffmpeg support)')
     parser.add_argument('--half', action='store_true', help='half precision FP16 inference')
     parser.add_argument('--device', default='', help='device id (i.e. 0 or 0,1) or cpu')
+    parser.add_argument('--view-img', action='store_true', help='display results')
     opt = parser.parse_args()
     print(opt)
 

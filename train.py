@@ -100,6 +100,7 @@ def train():
     cutoff = -1  # backbone reaches to cutoff layer
     start_epoch = 0
     best_fitness = 0.
+    attempt_download(weights)
     if weights.endswith('.pt'):  # pytorch format
         # possible weights are 'last.pt', 'yolov3-spp.pt', 'yolov3-tiny.pt' etc.
         if opt.bucket:
@@ -107,11 +108,11 @@ def train():
         chkpt = torch.load(weights, map_location=device)
 
         # load model
-        if opt.transfer:
-            chkpt['model'] = {k: v for k, v in chkpt['model'].items() if model.state_dict()[k].numel() == v.numel()}
-            model.load_state_dict(chkpt['model'], strict=False)
-        else:
-            model.load_state_dict(chkpt['model'])
+        # if opt.transfer:
+        chkpt['model'] = {k: v for k, v in chkpt['model'].items() if model.state_dict()[k].numel() == v.numel()}
+        model.load_state_dict(chkpt['model'], strict=False)
+        # else:
+        #    model.load_state_dict(chkpt['model'])
 
         # load optimizer
         if chkpt['optimizer'] is not None:
@@ -133,11 +134,12 @@ def train():
     if opt.transfer or opt.prebias:  # transfer learning edge (yolo) layers
         nf = int(model.module_defs[model.yolo_layers[0] - 1]['filters'])  # yolo layer size (i.e. 255)
 
-        for p in optimizer.param_groups:
-            # lower param count allows more aggressive training settings: i.e. SGD ~0.1 lr0, ~0.9 momentum
-            p['lr'] *= 100
-            if p.get('momentum') is not None:  # for SGD but not Adam
-                p['momentum'] *= 0.9
+        if opt.prebias:
+            for p in optimizer.param_groups:
+                # lower param count allows more aggressive training settings: i.e. SGD ~0.1 lr0, ~0.9 momentum
+                p['lr'] *= 100  # lr gain
+                if p.get('momentum') is not None:  # for SGD but not Adam
+                    p['momentum'] *= 0.9
 
         for p in model.parameters():
             if opt.prebias and p.numel() == nf:  # train (yolo biases)
@@ -428,21 +430,20 @@ if __name__ == '__main__':
             if os.path.exists('evolve.txt'):  # if evolve.txt exists: select best hyps and mutate
                 # Select parent(s)
                 x = np.loadtxt('evolve.txt', ndmin=2)
-                if len(x) > 1:
-                    parent = 'weighted'  # parent selection method: 'single' or 'weighted'
-                    if parent == 'single':
-                        x = x[fitness(x).argmax()]
-                    elif parent == 'weighted':  # weighted combination
-                        n = min(10, x.shape[0])  # number to merge
-                        x = x[np.argsort(-fitness(x))][:n]  # top n mutations
-                        w = fitness(x) - fitness(x).min()  # weights
-                        x = (x[:n] * w.reshape(n, 1)).sum(0) / w.sum()  # new parent
+                parent = 'weighted'  # parent selection method: 'single' or 'weighted'
+                if parent == 'single' or len(x) == 1:
+                    x = x[fitness(x).argmax()]
+                elif parent == 'weighted':  # weighted combination
+                    n = min(10, x.shape[0])  # number to merge
+                    x = x[np.argsort(-fitness(x))][:n]  # top n mutations
+                    w = fitness(x) - fitness(x).min()  # weights
+                    x = (x[:n] * w.reshape(n, 1)).sum(0) / w.sum()  # new parent
                 for i, k in enumerate(hyp.keys()):
                     hyp[k] = x[i + 7]
 
                 # Mutate
                 np.random.seed(int(time.time()))
-                s = [.1, .1, .1, .1, .1, .1, .1, .0, .02, .2, .2, .2, .2, .2, .2, .2, .2]  # sigmas
+                s = [.2, .2, .2, .2, .2, .2, .2, .0, .02, .2, .2, .2, .2, .2, .2, .2, .2]  # sigmas
                 for i, k in enumerate(hyp.keys()):
                     x = (np.random.randn(1) * s[i] + 1) ** 2.0  # plt.hist(x.ravel(), 300)
                     hyp[k] *= float(x)  # vary by sigmas
